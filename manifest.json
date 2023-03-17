@@ -12,7 +12,7 @@
 	  "128": "icon.png"
   },
   "manifest_version": 2,
-  "name": "Close Duplicate Tabs",
+  "name": "Close Other Duplicate Tabs",
   "permissions": [
     "cookies",
     "tabs"
