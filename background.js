@@ -1,73 +1,143 @@
 /* global browser */
 
-const delayed_updateBA_timeout = 3000;
-const tabId2dupTabIds = new Map();
+// tabId => { url, cookiestore, lastAccessed, created }
+const tabdata = new Map();
+
+// tabId => [tabId, tabid  ]  dups
+const dupdata = new Map();
+
+const delayed_updateBA_timeout = 500;
 
 let delayed_updateBA_timerId;
 
-async function onBAClicked(tab) {
-  delDups(tab.id);
-}
-
-async function getDups(check_tab) {
-  return (
-    await browser.tabs.query({
-      windowId: check_tab.windowId,
-      hidden: false,
-      pinned: false,
-    })
-  )
-    .filter((t) => t.id !== check_tab.id)
-    .filter(
-      (t) =>
-        t.url === check_tab.url && t.cookieStoreId === check_tab.cookieStoreId
-    )
-    .map((t) => t.id);
-}
-
-function delDups(tabId) {
-  const dupTabIds = tabId2dupTabIds.get(tabId);
-  if (dupTabIds.length > 0) {
-    browser.tabs.remove(dupTabIds);
-  }
-}
-
-async function delayed_updateBA(tabId) {
+async function delayed_updateBA() {
   clearTimeout(delayed_updateBA_timerId);
   delayed_updateBA_timerId = setTimeout(async () => {
-    updateBA(tabId);
+    updateBA();
   }, delayed_updateBA_timeout);
 }
 
-async function handleActivated(activeInfo) {
-  delayed_updateBA(activeInfo.tabId);
-}
+function updateDupData() {
+  for (const [tabId, t0] of tabdata) {
+    const t0_dups = [...tabdata]
+      .filter(
+        ([k, v]) =>
+          k !== tabId &&
+          t0.url === v.url &&
+          t0.cookieStoreId === v.cookieStoreId
+      )
+      .map(([k]) => k);
 
-async function updateBA(tabId) {
-  const dupTabIds = await getDups(await browser.tabs.get(tabId));
-  tabId2dupTabIds.set(tabId, dupTabIds);
-  if (dupTabIds.length > 0) {
-    browser.browserAction.enable(tabId);
-    browser.browserAction.setBadgeText({
-      tabId: tabId,
-      text: "" + dupTabIds.length,
-    });
-    browser.browserAction.setTitle({
-      tabId: tabId,
-      title: "Close " + dupTabIds.length + " duplicates",
-    });
-  } else {
-    browser.browserAction.disable(tabId);
-    browser.browserAction.setBadgeText({ tabId: tabId, text: "" });
-    browser.browserAction.setTitle({ tabId: tabId, title: "" });
+    dupdata.set(tabId, t0_dups);
   }
 }
 
-// init
+// delete duplicates
+function delDups(tabId) {
+  if (dupdata.has(tabId)) {
+    const tmp = dupdata.get(tabId);
+    if (tmp.length > 0) {
+      browser.tabs.remove(tmp);
+    }
+  }
+}
+
+//
+function updateBA() {
+  updateDupData();
+  for (const [k, v] of dupdata) {
+    if (v.length > 0) {
+      browser.browserAction.enable(k);
+      browser.browserAction.setBadgeText({ tabId: k, text: "" + v.length });
+      browser.browserAction.setTitle({
+        tabId: k,
+        title: "Close " + v.length + " Duplicates",
+      });
+    } else {
+      browser.browserAction.disable(k);
+      browser.browserAction.setTitle({
+        tabId: k,
+        title: "No Duplicates to Close",
+      });
+      browser.browserAction.setBadgeText({ tabId: k, text: "" });
+    }
+  }
+}
+
+// init button + popuplate tabdata cache
 (async () => {
   browser.browserAction.disable();
+  browser.browserAction.setBadgeText({ text: "" });
+  browser.browserAction.setBadgeBackgroundColor({ color: "orange" });
+  //browser.browserAction.setBadgeBackgroundColor({ color: "green" });
+  browser.browserAction.setTitle({ title: "No Duplicates to Close" });
+
+  (
+    await browser.tabs.query({
+      currentWindow: true,
+      hidden: false,
+      pinned: false,
+    })
+  ).forEach((t) => {
+    tabdata.set(t.id, {
+      url: t.url,
+      cs: t.cookieStoreId,
+      lastAccessed: t.lastAccessed,
+      created: Date.now(),
+    });
+  });
+  delayed_updateBA();
 })();
 
 // register listeners
-browser.browserAction.onClicked.addListener(onBAClicked);
-browser.tabs.onActivated.addListener(handleActivated);
+
+// update cache
+browser.tabs.onUpdated.addListener(
+  (tabId, changeInfo, t) => {
+    if (typeof changeInfo.url === "string") {
+      if (tabdata.has(t.id)) {
+        let tmp = tabdata.get(t.id);
+        tmp.url = changeInfo.url;
+        tabdata.set(t.id, tmp);
+      }
+      delayed_updateBA();
+    }
+  },
+  { properties: ["url"] }
+);
+
+// update cache
+browser.tabs.onCreated.addListener((t) => {
+  tabdata.set(t.id, {
+    url: t.url,
+    cs: t.cookieStoreId,
+    lastAccessed: t.lastAccessed,
+    created: Date.now(),
+  });
+  delayed_updateBA();
+});
+
+// update the lastAccessed timestamp
+browser.tabs.onActivated.addListener((info) => {
+  let tmp = tabdata.get(info.tabId);
+  tmp.lastAccessed = Date.now();
+  tabdata.set(info.tabId, tmp);
+});
+
+// remove tab from cache
+browser.tabs.onRemoved.addListener((tabId) => {
+  if (tabdata.has(tabId)) {
+    tabdata.delete(tabId);
+  }
+  if (dupdata.has(tabId)) {
+    dupdata.delete(tabId);
+  }
+  delayed_updateBA();
+});
+
+// tigger deletion
+browser.browserAction.onClicked.addListener((tab) => {
+  delDups(tab.id);
+  browser.browserAction.disable(tab.id);
+  browser.browserAction.setBadgeText({ tabId: tab.id, text: "" });
+});
