@@ -29,7 +29,8 @@ function updateDupData() {
         ([k, v]) =>
           k !== tabId &&
           t0.url === v.url &&
-          t0.cookieStoreId === v.cookieStoreId
+          t0.cookieStoreId === v.cookieStoreId &&
+	  v.status !== 'loading'
       )
       .map(([k]) => k);
 
