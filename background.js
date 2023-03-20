@@ -1,5 +1,10 @@
 /* global browser */
 
+/*
+const manifest = browser.runtime.getManifest();
+const extname = manifest.name;
+*/
+
 // tabId => { url, cookiestore, lastAccessed, created }
 const tabdata = new Map();
 
@@ -49,17 +54,11 @@ function updateBA() {
     if (v.length > 0) {
       browser.browserAction.enable(k);
       browser.browserAction.setBadgeText({ tabId: k, text: "" + v.length });
-      browser.browserAction.setTitle({
-        tabId: k,
-        title: "Close " + v.length + " Duplicates",
-      });
+      browser.browserAction.setTitle({ tabId: k, title: "Close " + v.length + " Tabs" });
     } else {
       browser.browserAction.disable(k);
-      browser.browserAction.setTitle({
-        tabId: k,
-        title: "No Duplicates to Close",
-      });
       browser.browserAction.setBadgeText({ tabId: k, text: "" });
+      browser.browserAction.setTitle({ tabId: k, title: "" });
     }
   }
 }
@@ -69,21 +68,18 @@ function updateBA() {
   browser.browserAction.disable();
   browser.browserAction.setBadgeText({ text: "" });
   browser.browserAction.setBadgeBackgroundColor({ color: "orange" });
-  //browser.browserAction.setBadgeBackgroundColor({ color: "green" });
-  browser.browserAction.setTitle({ title: "No Duplicates to Close" });
+  browser.browserAction.setTitle({ title: "" });
 
   (
     await browser.tabs.query({
-      currentWindow: true,
       hidden: false,
       pinned: false,
     })
   ).forEach((t) => {
     tabdata.set(t.id, {
+      status: t.status,
       url: t.url,
       cs: t.cookieStoreId,
-      lastAccessed: t.lastAccessed,
-      created: Date.now(),
     });
   });
   delayed_updateBA();
@@ -94,16 +90,19 @@ function updateBA() {
 // update cache
 browser.tabs.onUpdated.addListener(
   (tabId, changeInfo, t) => {
-    if (typeof changeInfo.url === "string") {
-      if (tabdata.has(t.id)) {
-        let tmp = tabdata.get(t.id);
-        tmp.url = changeInfo.url;
-        tabdata.set(t.id, tmp);
+    if (tabdata.has(t.id)) {
+      let tmp = tabdata.get(t.id);
+      if (typeof changeInfo.status === "string") {
+        tmp.status = changeInfo.status;
       }
+      if (typeof changeInfo.url === "string") {
+        tmp.url = changeInfo.url;
+      }
+      tabdata.set(t.id, tmp);
       delayed_updateBA();
     }
   },
-  { properties: ["url"] }
+  { properties: ["url","status"] }
 );
 
 // update cache
@@ -111,17 +110,9 @@ browser.tabs.onCreated.addListener((t) => {
   tabdata.set(t.id, {
     url: t.url,
     cs: t.cookieStoreId,
-    lastAccessed: t.lastAccessed,
-    created: Date.now(),
+    status: "created",
   });
   delayed_updateBA();
-});
-
-// update the lastAccessed timestamp
-browser.tabs.onActivated.addListener((info) => {
-  let tmp = tabdata.get(info.tabId);
-  tmp.lastAccessed = Date.now();
-  tabdata.set(info.tabId, tmp);
 });
 
 // remove tab from cache
@@ -135,7 +126,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
   delayed_updateBA();
 });
 
-// tigger deletion
+// trigger deletion
 browser.browserAction.onClicked.addListener((tab) => {
   delDups(tab.id);
   browser.browserAction.disable(tab.id);
